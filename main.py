@@ -11,23 +11,21 @@ import logging
 class Bot:
     def __init__(self):
 
-        self.args = self._parse_args()
+        self._args = self._parse_args()
 
-        self.time_pattern = re.compile(r'\b(1[1-4])[:|-]?([1-5]\d)\b')
+        self._time_pattern = re.compile(r'\b(1[1-4])[:|-]?([0-5]\d)\b')
 
-        self.updater = Updater(token=self.args.token, use_context=True)
+        self.updater = Updater(token=self._args.token, use_context=True)
         self.dispatcher = self.updater.dispatcher
 
-        self.chat_id_to_was_declared = collections.defaultdict(bool)
-        self.chat_id_to_repeating_job = {}
+        self._chat_id_to_was_declared = collections.defaultdict(bool)
+        self._chat_id_to_repeating_job = {}
 
         start_handler = CommandHandler('start', self._start_callback)
         self.dispatcher.add_handler(start_handler)
 
         start_handler = MessageHandler(Filters.text, self._read_message_from_group_callback)
         self.dispatcher.add_handler(start_handler)
-
-        self.updater.start_polling()
 
     @staticmethod
     def _parse_args():
@@ -49,12 +47,12 @@ class Bot:
 
         text = update.message.text
 
-        match = self.time_pattern.findall(text)
+        match = self._time_pattern.findall(text)
 
-        if len(match) == 1:
+        if len(match) > 0:
             hours, minutes = match[0]
 
-            self.chat_id_to_was_declared[update.message.chat_id] = True
+            self._chat_id_to_was_declared[update.message.chat_id] = True
             context.bot.send_message(chat_id=update.message.chat_id, text=f"{hours}:{minutes}")
 
         self._schedule_declaration_job_if_not_exist(update, context)
@@ -68,16 +66,16 @@ class Bot:
 
         chat_id = context.job.context
 
-        if self.chat_id_to_was_declared[chat_id] is False:
-            context.bot.send_message(chat_id=chat_id, text=self.args.time_to_declare)
+        if self._chat_id_to_was_declared[chat_id] is False:
+            context.bot.send_message(chat_id=chat_id, text=self._args.time_to_declare)
 
         else:
-            self.chat_id_to_was_declared[chat_id] = False
+            self._chat_id_to_was_declared[chat_id] = False
 
     def _schedule_declaration_job_if_not_exist(self, update, context):
         chat_id = update.message.chat_id
-        if chat_id not in self.chat_id_to_repeating_job:
-            next_declaration_time = self._calculate_next_declaration_time(self.args.declare_at)
+        if chat_id not in self._chat_id_to_repeating_job:
+            next_declaration_time = self._calculate_next_declaration_time(self._args.declare_at)
 
             DAY_IN_SECONDS = 60 * 60 * 24
 
@@ -86,11 +84,11 @@ class Bot:
                                                                       interval=DAY_IN_SECONDS,
                                                                       context=update.message.chat_id)
 
-            self.chat_id_to_repeating_job[chat_id] = declare_callback_handle
+            self._chat_id_to_repeating_job[chat_id] = declare_callback_handle
 
     def _start_callback(self, update, context: telegram.ext.callbackcontext.CallbackContext):
         chat_id = update.message.chat_id
-        self.chat_id_to_was_declared[chat_id] = False
+        self._chat_id_to_was_declared[chat_id] = False
 
         context.bot.send_message(chat_id=chat_id, text="bot started")
 
@@ -114,7 +112,10 @@ def main():
     logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                         level=logging.INFO)
 
-    Bot()
+    bot = Bot()
+
+    bot.updater.start_polling()
+    bot.updater.idle()
 
 
 if __name__ == "__main__":
