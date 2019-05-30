@@ -3,9 +3,11 @@ import collections
 import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 import argparse
-import re
 from datetime import datetime
 import logging
+from bs4 import BeautifulSoup as soup
+import requests
+import re
 
 
 class Bot:
@@ -24,8 +26,14 @@ class Bot:
         start_handler = CommandHandler('start', self._start_callback)
         self.dispatcher.add_handler(start_handler)
 
-        start_handler = MessageHandler(Filters.text, self._read_message_from_group_callback)
-        self.dispatcher.add_handler(start_handler)
+
+        self.gute = GuteSpecial()
+        gute_special_dish_handler = CommandHandler('gute', self.gute.gute_callback)
+        self.dispatcher.add_handler(gute_special_dish_handler)
+
+        regular_message = MessageHandler(Filters.text, self._read_message_from_group_callback)
+        self.dispatcher.add_handler(regular_message)
+
 
     @staticmethod
     def _parse_args():
@@ -106,6 +114,39 @@ class Bot:
             next_time = next_time.replace(day=current_time.day + 1)
 
         return next_time
+
+
+class GuteSpecial:
+    def __init__(self):
+        self.url_to_parse = 'https://www.mishloha.co.il/r/גוטה%20בריא%20ומהיר%20הרצליה#!/rest/3190/menu'
+        self.search_regex = re.compile("ספיישל היום")
+
+    def get_special(self):
+        response = requests.get(self.url_to_parse)
+
+        if response.status_code != 200:
+            return None
+
+        parser = soup(response.content, "html.parser")
+        dishes = parser.find_all(True, {"class": "dish-name"}, string=self.search_regex)
+
+        if len(dishes) == 0:
+            return None
+        else:
+            return dishes[0].string
+
+    def gute_callback(self, update, context: telegram.ext.callbackcontext.CallbackContext):
+        special = self.get_special()
+
+        message_to_user = ""
+
+        if special is None:
+            message_to_user += "couldn't get special"
+        else:
+            message_to_user += special
+
+        context.bot.send_message(chat_id=update.message.chat_id, text=message_to_user)
+
 
 
 def main():
