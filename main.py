@@ -111,7 +111,11 @@ class Bot:
         self._schedule_declaration_job_if_not_exist(update, context)
 
     def _zozobra_callback(self, update, context: telegram.ext.callbackcontext.CallbackContext):
+<<<<<<< HEAD
         print(update.message.from_user.username + " zozobra " + str(datetime.now()))
+=======
+        print(str(update.message.from_user.username) + " zozobra")
+>>>>>>> fbe3d4e... added username logging
         context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
         response = requests.get('https://www.10bis.co.il/next/Restaurants/Menu/Delivery/562/זוזוברה')
         message_to_user = "couldn't get special"
@@ -127,7 +131,11 @@ class Bot:
         self._schedule_declaration_job_if_not_exist(update, context)
 
     def _gute_callback(self, update, context):
+<<<<<<< HEAD
         print(update.message.from_user.username + " gute " + str(datetime.now()))
+=======
+        print(str(update.message.from_user.username) + " gute")
+>>>>>>> fbe3d4e... added username logging
         GuteSpecial.gute_callback(update, context)
 
         self._schedule_declaration_job_if_not_exist(update, context)
