@@ -53,7 +53,6 @@ class Bot:
         self.dispatcher.add_handler(regular_message)
 
     def _read_message_from_group_callback(self, update, context):
-
         text = update.message.text
 
         match = self._time_pattern.findall(text)
@@ -108,13 +107,14 @@ class Bot:
         self._schedule_declaration_job_if_not_exist(update, context)
 
     def _zozobra_callback(self, update, context: telegram.ext.callbackcontext.CallbackContext):
+        print(str(update.message.from_user.username) + " zozobra")
         context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
         response = requests.get('https://www.10bis.co.il/next/Restaurants/Menu/Delivery/562/זוזוברה')
         message_to_user = "couldn't get special"
 
         if response.status_code == 200:
-            bs = BeautifulSoup(response.content, "html5lib")
-            special_list = bs.findAll("div", string="ספיישל השבוע עיסקי")
+            bs = BeautifulSoup(response.content, "html.parser")
+            special_list = bs.findAll("div", string=re.compile("ספיישל השבוע"))
             filtered_list = list(filter(lambda item: item.parent['class'][0].startswith("Menu"), special_list))
             if len(filtered_list) != 0:
                 message_to_user = filtered_list[0].parent.text
@@ -123,6 +123,7 @@ class Bot:
         self._schedule_declaration_job_if_not_exist(update, context)
 
     def _gute_callback(self, update, context):
+        print(str(update.message.from_user.username) + " gute")
         GuteSpecial.gute_callback(update, context)
 
         self._schedule_declaration_job_if_not_exist(update, context)
