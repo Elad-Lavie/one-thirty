@@ -8,6 +8,7 @@ import re
 import telegram
 from telegram import ChatAction
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from bs4 import BeautifulSoup
 
 
 class Bot:
@@ -46,6 +47,8 @@ class Bot:
 
         self.dispatcher.add_handler(CommandHandler('gute', self._gute_callback))
 
+        self.dispatcher.add_handler(CommandHandler('zozobra', self._zozobra_callback))
+
         regular_message = MessageHandler(Filters.text, self._read_message_from_group_callback)
         self.dispatcher.add_handler(regular_message)
 
@@ -60,6 +63,10 @@ class Bot:
 
             self._chat_id_to_was_declared[update.message.chat_id] = True
             context.bot.send_message(chat_id=update.message.chat_id, text=f"{hours}:{minutes}")
+
+        elif "rm -rf" in text.lower():
+            context.bot.send_animation(chat_id=update.message.chat_id,
+                                       animation="https://media.giphy.com/media/lruCgPNh4Bo3K/giphy.gif")
 
         self._schedule_declaration_job_if_not_exist(update, context)
 
@@ -98,6 +105,21 @@ class Bot:
 
         update.message.reply_text("bot started")
 
+        self._schedule_declaration_job_if_not_exist(update, context)
+
+    def _zozobra_callback(self, update, context: telegram.ext.callbackcontext.CallbackContext):
+        context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
+        response = requests.get('https://www.10bis.co.il/next/Restaurants/Menu/Delivery/562/זוזוברה')
+        message_to_user = "couldn't get special"
+
+        if response.status_code == 200:
+            bs = BeautifulSoup(response.content, "html5lib")
+            special_list = bs.findAll("div", string="ספיישל השבוע עיסקי")
+            filtered_list = list(filter(lambda item: item.parent['class'][0].startswith("Menu"), special_list))
+            if len(filtered_list) != 0:
+                message_to_user = filtered_list[0].parent.text
+
+        update.message.reply_text(message_to_user)
         self._schedule_declaration_job_if_not_exist(update, context)
 
     def _gute_callback(self, update, context):
