@@ -4,6 +4,8 @@ from datetime import datetime
 import logging
 import requests
 import re
+from time import time
+import json
 
 import telegram
 from telegram import ChatAction
@@ -48,6 +50,8 @@ class Bot:
         self.dispatcher.add_handler(CommandHandler('gute', self._gute_callback))
 
         self.dispatcher.add_handler(CommandHandler('zozobra', self._zozobra_callback))
+
+        self.dispatcher.add_handler(CommandHandler('pilaf', self._pilaf_callback))
 
         regular_message = MessageHandler(Filters.text, self._read_message_from_group_callback)
         self.dispatcher.add_handler(regular_message)
@@ -127,6 +131,16 @@ class Bot:
         GuteSpecial.gute_callback(update, context)
 
         self._schedule_declaration_job_if_not_exist(update, context)
+
+    def _pilaf_callback(self, update, context):
+        print(str(update.message.from_user.username) + " pilaf ")
+        PILAF_API = f'http://api.beteabon.co.il/website/api.php?action=get&guid=4B04EDAE-BE13-D698-9F7D-61EBB1192BDF&time={int(time())}'
+        response = requests.get(PILAF_API)
+        json_data = json.loads(response.content)
+        for item in json_data['rest']['menu']:
+            if "ספיישל היום" in item['name']:
+                specials = [special['name'] for special in item['items']]
+                update.message.reply_text("\n".join(specials))
 
     @staticmethod
     def _calculate_next_declaration_time(declare_at: str):
