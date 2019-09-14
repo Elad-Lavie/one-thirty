@@ -1,0 +1,4 @@
+beautifulsoup4>=4.8.0
+ujson>=1.35
+requests>=2.22.0
+python-telegram-bot>=12.1.0
