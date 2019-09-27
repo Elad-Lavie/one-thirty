@@ -1,15 +1,17 @@
 import collections
 import argparse
-from datetime import datetime
+import datetime
 import logging
 import requests
 import re
 from time import time
 import json
+import pathlib
+import csv
 
 import telegram
 from telegram import ChatAction
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, jobqueue
 from bs4 import BeautifulSoup
 
 
@@ -18,15 +20,19 @@ class Bot:
 
         self._args = self._parse_args()
 
-        self._time_pattern = re.compile(r'\b(1[1-4])[:|-]?([0-5]\d)\b')
+        self._time_pattern = re.compile(r'(?:\b|[^0-9])(1[1-4])[:|-]?([0-5]\d)(?:\b|[^0-9])')
 
         self.updater = Updater(token=self._args.token, use_context=True)
+
         self.dispatcher = self.updater.dispatcher
 
-        self._chat_id_to_was_declared = collections.defaultdict(bool)
-        self._chat_id_to_repeating_job = {}
+        self._chat_id_to_should_announce = collections.defaultdict(bool)
 
         self._add_handlers()
+
+        self._start_declaration_job()
+
+        self._non_working_days = self.get_non_working_dates()
 
     @staticmethod
     def _parse_args():
@@ -40,11 +46,23 @@ class Bot:
         args = parser.parse_args()
 
         for time_pattern in (args.time_to_declare, args.declare_at):
-            datetime.strptime(time_pattern, '%H:%M')  # raises if time format is illegal
+            datetime.datetime.strptime(time_pattern, '%H:%M')  # raises if time format is illegal
 
         return args
 
+    def get_non_working_dates(self):
+        path_to_dates_files = pathlib.Path(__file__).parent / "non_working_days.csv"
+
+        with open(path_to_dates_files, "r") as fd:
+            reader = csv.reader(fd)
+            non_working_days = {datetime.datetime.strptime(date[0], "%Y-%m-%d").date() for date in reader}
+
+        return non_working_days
+
     def _add_handlers(self):
+        self.dispatcher.add_handler(MessageHandler(Filters.text | Filters.command,
+                                                   self._before_each_command_and_message_callback), group=-1)
+
         self.dispatcher.add_handler(CommandHandler('start', self._start_callback))
 
         self.dispatcher.add_handler(CommandHandler('gute', self._gute_callback))
@@ -53,65 +71,65 @@ class Bot:
 
         self.dispatcher.add_handler(CommandHandler('pilaf', self._pilaf_callback))
 
-        regular_message = MessageHandler(Filters.text, self._read_message_from_group_callback)
-        self.dispatcher.add_handler(regular_message)
+        self.dispatcher.add_handler(MessageHandler(Filters.text, self._handle_non_command_message))
 
-    def _read_message_from_group_callback(self, update, context):
+    def _before_each_command_and_message_callback(self, update, context):
+        message = update.message
+        print(f"{message.from_user.first_name or ''}  {message.from_user.id or ''}:\n"
+              f"{message.text or ''}\n")
+
+        chat_id = update.message.chat_id
+        if chat_id not in self._chat_id_to_should_announce:
+            print("new chat " + str(chat_id))
+
+            self._chat_id_to_should_announce[chat_id] = True
+
+    def _start_declaration_job(self):
+        def declaration_job(context):
+            if datetime.date.today() not in self._non_working_days:
+                for chat_id, should_announce in self._chat_id_to_should_announce.items():
+                    if should_announce is True:
+                        context.bot.send_message(chat_id=chat_id, text=self._args.time_to_declare)
+
+        announcement_hour, announcement_minute = map(int, self._args.declare_at.split(":"))
+        declaration_time = datetime.time(announcement_hour, announcement_minute)
+
+        d = jobqueue.Days
+        self.dispatcher.job_queue.run_daily(declaration_job,
+                                            days=(d.SUN, d.MON, d.TUE, d.WED, d.THU),
+                                            time=declaration_time)
+
+        def reset_job(context):
+            for chat_id in self._chat_id_to_should_announce:
+                self._chat_id_to_should_announce[chat_id] = True
+
+        # noinspection PyCallByClass
+        midnight_time = datetime.time(0, 0)
+        self.dispatcher.job_queue.run_daily(reset_job, time=midnight_time)
+
+    def _handle_non_command_message(self, update, context):
         text = update.message.text
 
         match = self._time_pattern.findall(text)
 
         if len(match) > 0:
-            hours, minutes = match[0]
+            self._chat_id_to_should_announce[update.message.chat_id] = False
 
-            self._chat_id_to_was_declared[update.message.chat_id] = True
+            hours, minutes = match[0]
             context.bot.send_message(chat_id=update.message.chat_id, text=f"{hours}:{minutes}")
 
         elif "rm -rf" in text.lower():
             context.bot.send_animation(chat_id=update.message.chat_id,
                                        animation="https://media.giphy.com/media/lruCgPNh4Bo3K/giphy.gif")
 
-        self._schedule_declaration_job_if_not_exist(update, context)
-
-    def _declare_time_if_necassary_callback(self, context):
-        FRIDAY = 4
-        SATURDAY = 5
-
-        if datetime.today().weekday() in (FRIDAY, SATURDAY):
-            return
-
-        chat_id = context.job.context
-
-        if self._chat_id_to_was_declared[chat_id] is False:
-            context.bot.send_message(chat_id=chat_id, text=self._args.time_to_declare)
-
-        else:
-            self._chat_id_to_was_declared[chat_id] = False
-
-    def _schedule_declaration_job_if_not_exist(self, update, context):
-        chat_id = update.message.chat_id
-        if chat_id not in self._chat_id_to_repeating_job:
-            next_declaration_time = self._calculate_next_declaration_time(self._args.declare_at)
-
-            DAY_IN_SECONDS = 60 * 60 * 24
-
-            declare_callback_handle = context.job_queue.run_repeating(self._declare_time_if_necassary_callback,
-                                                                      first=next_declaration_time,
-                                                                      interval=DAY_IN_SECONDS,
-                                                                      context=update.message.chat_id)
-
-            self._chat_id_to_repeating_job[chat_id] = declare_callback_handle
-
     def _start_callback(self, update, context: telegram.ext.callbackcontext.CallbackContext):
         chat_id = update.message.chat_id
-        self._chat_id_to_was_declared[chat_id] = False
+        self._chat_id_to_should_announce[chat_id] = True
 
         update.message.reply_text("bot started")
 
-        self._schedule_declaration_job_if_not_exist(update, context)
-
-    def _zozobra_callback(self, update, context: telegram.ext.callbackcontext.CallbackContext):
-        print(str(update.message.from_user.username) + " zozobra")
+    @staticmethod
+    def _zozobra_callback(update, context: telegram.ext.callbackcontext.CallbackContext):
         context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
         response = requests.get('https://www.10bis.co.il/next/Restaurants/Menu/Delivery/562/זוזוברה')
         message_to_user = "couldn't get special"
@@ -124,16 +142,13 @@ class Bot:
                 message_to_user = filtered_list[0].parent.text
 
         update.message.reply_text(message_to_user)
-        self._schedule_declaration_job_if_not_exist(update, context)
 
-    def _gute_callback(self, update, context):
-        print(str(update.message.from_user.username) + " gute")
+    @staticmethod
+    def _gute_callback(update, context):
         GuteSpecial.gute_callback(update, context)
 
-        self._schedule_declaration_job_if_not_exist(update, context)
-
-    def _pilaf_callback(self, update, context):
-        print(str(update.message.from_user.username) + " pilaf ")
+    @staticmethod
+    def _pilaf_callback(update, context):
         PILAF_API = f'http://api.beteabon.co.il/website/api.php?action=get&guid=4B04EDAE-BE13-D698-9F7D-61EBB1192BDF&time={int(time())}'
         response = requests.get(PILAF_API)
         json_data = json.loads(response.content)
@@ -141,19 +156,6 @@ class Bot:
             if "ספיישל היום" in item['name']:
                 specials = [special['name'] for special in item['items']]
                 update.message.reply_text("\n".join(specials))
-
-    @staticmethod
-    def _calculate_next_declaration_time(declare_at: str):
-        announcement_hour, announcement_minute = map(int, declare_at.split(":"))
-        current_time = datetime.now()
-        current_hour = current_time.hour
-        current_minute = current_time.minute
-
-        next_time = current_time.replace(hour=announcement_hour, minute=announcement_minute, second=0, microsecond=0)
-        if (announcement_hour, announcement_minute) <= (current_hour, current_minute):
-            next_time = next_time.replace(day=current_time.day + 1)
-
-        return next_time
 
 
 class GuteSpecial:
